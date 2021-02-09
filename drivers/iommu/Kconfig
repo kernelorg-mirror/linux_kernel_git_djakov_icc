@@ -491,6 +491,9 @@ config SPRD_IOMMU
 	  and a few signal processors, including VSP(video), GSP(graphic),
 	  ISP(image), and CPP(camera pixel processor), etc.
 
-	  Say Y here if you want to use the multimedia devices listed above.
+config QCOM_IOMMU_UTIL
+	tristate "Qcom specific stuff"
+	help
+	  QCOM iommu stuff
 
 endif # IOMMU_SUPPORT
