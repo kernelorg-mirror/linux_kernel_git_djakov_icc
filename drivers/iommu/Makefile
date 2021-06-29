@@ -32,3 +32,6 @@ obj-$(CONFIG_SPRD_IOMMU) += sprd-iommu.o
 obj-$(CONFIG_APPLE_DART) += apple-dart.o
 obj-$(CONFIG_QCOM_IOMMU_UTIL) += qcom_iommu_util.o
 qcom_iommu_util-y += qcom-iommu-util.o
+obj-$(CONFIG_QCOM_IOMMU_DEBUG) += qcom_iommu_debug.o
+qcom_iommu_debug-y += qcom-iommu-debug.o
+qcom_iommu_debug-y += qcom-iommu-debug-user.o
