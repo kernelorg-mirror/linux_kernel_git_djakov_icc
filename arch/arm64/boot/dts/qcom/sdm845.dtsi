@@ -5338,6 +5338,88 @@
 				<GIC_SPI 425 IRQ_TYPE_LEVEL_HIGH>;
 			iommus = <&apps_smmu 0x0040 0x1>;
 		};
+
+		kgsl_iommu_test_device {
+			compatible = "iommu-debug-test";
+			/*
+			 * 0x7 isn't a valid sid, but should pass the sid sanity check.
+			 * We just need _something_ here to get this node recognized by
+			 * the SMMU driver. Our test uses ATOS, which doesn't use SIDs
+			 * anyways, so using a dummy value is ok.
+			 */
+			iommus = <&adreno_smmu 0x7>;
+		};
+
+		apps_iommu_test_device {
+			compatible = "iommu-debug-test";
+			/*
+			 * This SID belongs to TSIF. We can't use a fake SID for
+			 * the apps_smmu device.
+			 */
+			iommus = <&apps_smmu 0x20 0>;
+		};
+
+		apps_iommu_coherent_test_device {
+			compatible = "iommu-debug-test";
+			/*
+			 * This SID belongs to TSIF. We can't use a fake SID for
+			 * the apps_smmu device.
+			 */
+			iommus = <&apps_smmu 0x20 0>;
+			dma-coherent;
+		};
+
+		iommu_test_device {
+			compatible = "qcom,iommu-debug-test";
+
+			usecase0_apps {
+				compatible = "qcom,iommu-debug-usecase";
+				iommus = <&apps_smmu 0x20 0>;
+			};
+
+			usecase1_apps_fastmap {
+				compatible = "qcom,iommu-debug-usecase";
+				iommus = <&apps_smmu 0x20 0>;
+				qcom,iommu-dma = "fastmap";
+			};
+
+			usecase2_apps_atomic {
+				compatible = "qcom,iommu-debug-usecase";
+				iommus = <&apps_smmu 0x20 0>;
+				qcom,iommu-dma = "atomic";
+			};
+
+			usecase3_apps_dma {
+				compatible = "qcom,iommu-debug-usecase";
+				iommus = <&apps_smmu 0x20 0>;
+				dma-coherent;
+			};
+
+			usecase4_apps_secure {
+				compatible = "qcom,iommu-debug-usecase";
+				iommus = <&apps_smmu 0x20 0>;
+				qcom,iommu-dma = "atomic";
+				qcom,iommu-vmid = <0xA>; /* VMID_CP_PIXEL */
+			};
+
+			usecase5_apps_secure {
+				compatible = "qcom,iommu-debug-usecase";
+				iommus = <&apps_smmu 0x20 0>;
+				qcom,iommu-dma = "atomic";
+				qcom,iommu-vmid = <0xA>; /* VMID_CP_PIXEL */
+			};
+
+			usecase6_kgsl {
+				compatible = "qcom,iommu-debug-usecase";
+				iommus = <&adreno_smmu 0x7>;
+			};
+
+			usecase7_kgsl_dma {
+				compatible = "qcom,iommu-debug-usecase";
+				iommus = <&adreno_smmu 0x7>;
+				dma-coherent;
+			};
+		};
 	};
 
 	sound: sound {
