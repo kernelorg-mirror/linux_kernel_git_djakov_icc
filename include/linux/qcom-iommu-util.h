@@ -9,7 +9,7 @@
 
 #define IOMMU_TRANS_DEFAULT (0U)
 #define QCOM_IOMMU_ATOS_TRANS_DEFAULT	(0U)
-#define to_qcom_iommu_ops(x) (container_of(x, struct qcom_iommu_ops, iommu_ops))
+#define to_qcom_iommu_domain_ops(x) (container_of(x, struct qcom_iommu_domain_ops, iommu_domain_ops))
 
 #include <linux/iommu.h>
 
@@ -19,10 +19,10 @@ struct qcom_iommu_atos_txn {
 	u32 id;
 };
 
-struct qcom_iommu_ops {
+struct qcom_iommu_domain_ops {
 	phys_addr_t (*iova_to_phys_hard)(struct iommu_domain *domain,
 					 struct qcom_iommu_atos_txn *txn);
-	struct iommu_ops iommu_ops;
+	struct iommu_domain_ops iommu_domain_ops;
 };
 
 phys_addr_t qcom_iommu_iova_to_phys_hard(struct iommu_domain *domain,
