@@ -1274,7 +1274,63 @@ static void iommu_debug_device_profiling(struct seq_file *s, struct iommu_debug_
 	}
 
 	seq_putc(s, '\n');
-	seq_printf(s, "%8s %19s %16s\n", "size", "iommu_map_sg", "iommu_unmap");
+	seq_printf(s, "%8s %19s %16s\n", "size", "dma_map_sg", "dma_unmap_sg");
+	for (sz = sizes; *sz; ++sz) {
+		size_t size = *sz;
+		u64 map_elapsed_ns = 0, unmap_elapsed_ns = 0;
+		u64 map_elapsed_us = 0, unmap_elapsed_us = 0;
+		u32 map_elapsed_rem = 0, unmap_elapsed_rem = 0;
+		ktime_t tbefore, tafter, diff;
+		struct sg_table table;
+		unsigned long chunk_size = SZ_4K;
+		int i;
+		unsigned long align_mask = ~0UL;
+
+		if (IS_ENABLED(CONFIG_IOMMU_LIMIT_IOVA_ALIGNMENT))
+			align_mask <<= min_t(unsigned long,
+					     CONFIG_IOMMU_IOVA_ALIGNMENT +
+					     PAGE_SHIFT, fls_long(size - 1));
+		else
+			align_mask <<= fls_long(size - 1);
+
+		align_mask = ~align_mask;
+
+		if (iommu_debug_build_phoney_sg_table(dev, &table, size,
+						      chunk_size)) {
+			seq_puts(s, "couldn't build phoney sg table! bailing...\n");
+			goto out;
+		}
+
+		for (i = 0; i < ddev->nr_iters; ++i) {
+			tbefore = ktime_get();
+			if (!dma_map_sg(dev, table.sgl, table.nents, DMA_BIDIRECTIONAL)) {
+				seq_puts(s, "Failed to dma_map_sg\n");
+				goto next;
+			}
+			tafter = ktime_get();
+			diff = ktime_sub(tafter, tbefore);
+			map_elapsed_ns += ktime_to_ns(diff);
+
+			tbefore = ktime_get();
+			dma_unmap_sg(dev, table.sgl, 1, DMA_BIDIRECTIONAL);
+			tafter = ktime_get();
+			diff = ktime_sub(tafter, tbefore);
+			unmap_elapsed_ns += ktime_to_ns(diff);
+		}
+
+		map_elapsed_ns = div_u64_rem(map_elapsed_ns, ddev->nr_iters, &map_elapsed_rem);
+		unmap_elapsed_ns = div_u64_rem(unmap_elapsed_ns, ddev->nr_iters,
+					       &unmap_elapsed_rem);
+
+		map_elapsed_us = div_u64_rem(map_elapsed_ns, 1000, &map_elapsed_rem);
+		unmap_elapsed_us = div_u64_rem(unmap_elapsed_ns, 1000, &unmap_elapsed_rem);
+
+		seq_printf(s, "%8s %12lld.%03d us %9lld.%03d us\n", _size_to_string(size),
+			   map_elapsed_us, map_elapsed_rem, unmap_elapsed_us, unmap_elapsed_rem);
+	}
+
+	seq_putc(s, '\n');
+	seq_printf(s, "%8s %19s %16s\n", "size", "iommu_map_sg", "iommu_unmap_sg");
 	for (sz = sizes; *sz; ++sz) {
 		size_t size = *sz;
 		size_t unmapped;
