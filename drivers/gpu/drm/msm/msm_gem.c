@@ -267,7 +267,8 @@ void msm_gem_unpin_pages(struct drm_gem_object *obj)
 static pgprot_t msm_gem_pgprot(struct msm_gem_object *msm_obj, pgprot_t prot)
 {
 	if (msm_obj->flags & MSM_BO_WC)
-		return pgprot_writecombine(prot);
+		//return pgprot_writecombine(prot);
+		return pgprot_syscached(prot);
 	return prot;
 }
 
@@ -473,6 +474,9 @@ int msm_gem_pin_vma_locked(struct drm_gem_object *obj, struct msm_gem_vma *vma)
 
 	if (msm_obj->flags & MSM_BO_CACHED_COHERENT)
 		prot |= IOMMU_CACHE;
+
+	if (msm_obj->flags & MSM_BO_WC)
+		prot |= IOMMU_SYS_CACHE;
 
 	msm_gem_assert_locked(obj);
 
