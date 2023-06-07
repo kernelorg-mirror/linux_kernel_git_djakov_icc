@@ -804,6 +804,13 @@ static int arm_smmu_init_domain_context(struct iommu_domain *domain,
 			cfg->irptndx, irq);
 		cfg->irptndx = ARM_SMMU_INVALID_IRPTNDX;
 	}
+	{
+		struct device_node *np = dev->of_node;
+		if (of_property_read_bool(np, "qcom,debug")) {
+			dev_err(dev,"*************************** %s ENABLE DEBUG\n", __func__);
+			pgtbl_ops->debug = true;
+		}
+	}
 
 	mutex_unlock(&smmu_domain->init_mutex);
 
