@@ -118,7 +118,7 @@ static int msm_iommu_pagetable_map(struct msm_mmu *mmu, u64 iova,
 	struct scatterlist *sg;
 	u64 addr = iova;
 	unsigned int i;
-
+dev_err_ratelimited(mmu->dev, "*** %s iova=0x%llx len=%zu prot=0x%08x\n", __func__, iova, len, prot);
 	for_each_sgtable_sg(sgt, sg, i) {
 		size_t size = sg->length;
 		phys_addr_t phys = sg_phys(sg);

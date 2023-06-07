@@ -499,6 +499,9 @@ static int arm_lpae_map_pages(struct io_pgtable_ops *ops, unsigned long iova,
 		return 0;
 
 	prot = arm_lpae_prot_to_pte(data, iommu_prot);
+	if (ops->debug)
+		pr_err("%s iova=0x%lx pgsize=%zu pgcount=%zu prot=0x%llx iommu_prot=0x%08x\n", __func__, iova, pgsize, pgcount, prot, iommu_prot);
+
 	ret = __arm_lpae_map(data, iova, paddr, pgsize, pgcount, prot, lvl,
 			     ptep, gfp, mapped);
 	/*
