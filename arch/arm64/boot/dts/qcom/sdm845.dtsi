@@ -4784,6 +4784,7 @@
 			interconnects = <&mem_noc MASTER_GFX3D 0 &mem_noc SLAVE_EBI1 0>;
 			interconnect-names = "gfx-mem";
 
+			qcom,debug;
 			status = "disabled";
 
 			gpu_opp_table: opp-table {
