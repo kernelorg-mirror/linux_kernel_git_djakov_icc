@@ -55,7 +55,7 @@
 	.endif
 
 	sub	sp, sp, #PT_REGS_SIZE
-#if defined(CONFIG_VMAP_STACK) && !defined(CONFIG_DYNAMIC_STACK)
+#if !defined(CONFIG_DYNAMIC_STACK)
 	/*
 	 * Test whether the SP has overflowed, without corrupting a GPR.
 	 * Task and IRQ stacks are aligned so that SP & (1 << THREAD_SHIFT)
@@ -101,7 +101,7 @@
 	/* We were already on the overflow stack. Restore sp/x0 and carry on. */
 	sub	sp, sp, x0
 	mrs	x0, tpidrro_el0
-#endif /* CONFIG_VMAP_STACK */
+#endif /* !CONFIG_DYNAMIC_STACK */
 	b	el\el\ht\()_\regsize\()_\label
 .org .Lventry_start\@ + 128	// Did we overflow the ventry slot?
 	.endm
@@ -116,22 +116,43 @@
 	 * have just encountered a data abort on the task stack, and in
 	 * that case we cannot store anything on the current task stack.
 	 */
-	// Save x16, x17 in tpidr_el0, tpidrro_el0
-	msr	tpidr_el0, x16
-	msr	tpidrro_el0, x17
-	ldr_this_cpu x16, sync_stack_ptr, x17
-	mov	x17, sp		// Save old SP in x17
-	add	sp, x16, #SYNC_STACK_SIZE
-	sub	sp, sp, #8
-	str	x17, [sp]	// Save old SP on the sync stack
+
+	// Save x0, x1 in tpidr_el0, tpidrro_el0 so we have two scratch
+	// registers to use.
+	msr     tpidr_el0, x0
+	msr     tpidrro_el0, x1
+	// Check if we are handling a sync on the kernel stack
+	mrs     x0, esr_el1 // Check exception status, is this DABT?
+	lsr     x0, x0, #26
+	and     x0, x0, #0x3f
+	cmp     x0, #ESR_ELx_EC_DABT_CUR
+	b.ne    .Lventry_e1_sync_no_stack_sync\@ // Not a DABT so no sync on stack
+	mrs     x0, far_el1 // Check where the exception happened
+			    // Top byte ignore
+	sbfx    x0, x0, #0, #56
+	// get kernel task stack for current task, we can't inspect SP because
+	// that could be the IRQ stack which does not page dynamically.
+	get_current_task x1
+	ldr     x1, [x1, #TSK_STACK]
+	cmp     x0, x1
+	b.lo    .Lventry_e1_sync_no_stack_sync\@ // Not on the task stack
+	add     x1, x1, #THREAD_SIZE
+	cmp     x0, x1
+	b.hs    .Lventry_e1_sync_no_stack_sync\@ // Not on the task stack
+						 // Proceeed on the sync stack, we got a DABT on the stack indeed
+	ldr_this_cpu x0, sync_stack_ptr, x1
+	mov     x1, sp          // Save old SP in x1
+	add     sp, x0, #SYNC_STACK_SIZE
+	sub     sp, sp, #16     // Minimum stack step
+	str     x1, [sp]        // Save old SP on the sync stack
+				// Fall through and call the handler on the sync stack
+.Lventry_e1_sync_no_stack_sync\@:
+	// Just go on and stash registers on stack0
 	sub	sp, sp, #PT_REGS_SIZE
-	// Restore x16, x17 from in tpidr_el0, tpidrro_el0
-	mrs	x16, tpidr_el0
-	mrs	x17, tpidrro_el0
-	/*
-	 * Now tpidr_el0, tpidrro_el0 are clobbered and need to be restored
-	 * in the el1 sync handlers in C.
-	 */
+	// Restore x0, x1 from in tpidr_el0, tpidrro_el0
+	mrs     x0, tpidr_el0
+	mrs     x1, tpidrro_el0
+
 	b	el\el\ht\()_\regsize\()_\label
 .org .Lventry_el1_sync_start\@ + 128	// Did we overflow the ventry slot?
 	.endm
@@ -262,6 +283,17 @@ alternative_cb_end
 	mrs	x21, sp_el0
 	ldr_this_cpu	tsk, __entry_task, x20
 	msr	sp_el0, tsk
+
+	/*
+	 * Save two registers on stack for dynamic stack clobbering - with
+	 * dynamic stack we clobber these when working inside the kernel,
+	 * but make sure to write into the pt_regs copies instead of the
+	 * actual registers when we actually want to change them.
+	 */
+	mrs	x20, tpidr_el0
+	str	x20, [sp, #S_TPIDR_EL0]
+	mrs	x20, tpidrro_el0
+	str	x20, [sp, #S_TPIDRRO_EL0]
 
 	/*
 	 * Ensure MDSCR_EL1.SS is clear, since we can unmask debug exceptions
@@ -451,21 +483,37 @@ alternative_else_nop_endif
 
 	msr	elr_el1, x21			// set up the return data
 	msr	spsr_el1, x22
+	/*
+	 * Return from exception to userspace:
+	 * We have clobbered TPIDR_EL0 and TPIDRRO_EL0 so restore them
+	 * from pt_regs.
+	 */
+	.if     \el == 0
+	ldr     x0, [sp, #S_TPIDR_EL0]
+	msr     tpidr_el0, x0
+	ldr     x0, [sp, #S_TPIDRRO_EL0] // not needed? just set it to 0?
+	msr     tpidrro_el0, x0
+	.endif
 #ifdef CONFIG_DYNAMIC_STACK
 	/*
-	 * Really complicated way of getting the old SP out.
+	 * Return from a sync exception from inside the kernel
+	 * that has paged in a new stack page.
+	 *
+	 * Invoke a really complicated way of getting the old SP out.
 	 * We have now swapped in a new stack page so we can use
 	 * the common stack without any faults.
 	 */
 	.if	\el == 1 && \sync == 1
 	ldr	x2, [sp, #PT_REGS_SIZE] // Get old SP
-	sub	x2, x2, #8
+	sub	x2, x2, #16		// Minimum stack step
 	str	x2, [sp, #PT_REGS_SIZE] // Save SP
-	ldp	x0, x1, [sp, #16 *0] // Get stored x0, x1 from the IRQ stack
-	str	x0, [x2] // Put a copy of x0 on the top of the ordinary stack
+	ldp	x0, x1, [sp, #16 *0] // Get stored x0, x1 from the sync stack
+	stp	x0, x1, [x2] // Put a copy of x0, x1 on the top of the ordinary stack
 	.endif
 #endif
+	.if	\el != 1 || \sync != 1 // Dynamic stack sync does this another way
 	ldp	x0, x1, [sp, #16 * 0]
+	.endif
 	ldp	x2, x3, [sp, #16 * 1]
 	ldp	x4, x5, [sp, #16 * 2]
 	ldp	x6, x7, [sp, #16 * 3]
@@ -502,10 +550,12 @@ alternative_else_nop_endif
 #ifdef CONFIG_DYNAMIC_STACK
 	.if	\el == 1 && \sync == 1
 	// Restore original SP (was using sync stack) before in-kernel sync
+	// it is right below PT_REGS
 	ldr	x0, [sp, #PT_REGS_SIZE]
 	mov	sp, x0
-	ldr	x0, [sp] // We have put a copy of x0 here (see above)
-	add	sp, sp, #8
+	// We just above stashed a copy of x0, x1 on this stack
+	ldp	x0, x1, [sp] // Get the old x0, x1
+	add	sp, sp, #16 // Minimum stack step for x0, x1
 	.else
 	add	sp, sp, #PT_REGS_SIZE		// restore sp
 	.endif
@@ -604,7 +654,6 @@ SYM_CODE_START(vectors)
 	kernel_ventry	0, t, 32, error		// Error 32-bit EL0
 SYM_CODE_END(vectors)
 
-#ifdef CONFIG_VMAP_STACK
 SYM_CODE_START_LOCAL(__bad_stack)
 	/*
 	 * We detected an overflow in kernel_ventry, which switched to the
@@ -632,7 +681,6 @@ SYM_CODE_START_LOCAL(__bad_stack)
 	bl	handle_bad_stack
 	ASM_BUG()
 SYM_CODE_END(__bad_stack)
-#endif /* CONFIG_VMAP_STACK */
 
 
 	.macro entry_handler el:req, ht:req, regsize:req, label:req
@@ -716,29 +764,6 @@ SYM_CODE_END(ret_to_kernel)
 SYM_CODE_START_LOCAL(ret_to_kernel_el1_sync)
 	kernel_exit el=1, sync=1
 SYM_CODE_END(ret_to_kernel_el1_sync)
-
-SYM_FUNC_START(switch_sync_stack_to_task_stack)
-	// Obtain the task stack SP which is helpfully placed
-	// on the bottom of the special sync stack.
-	ldr_this_cpu x0, sync_stack_ptr, x1
-	add	x0, x0, #SYNC_STACK_SIZE
-	sub	x0, x0, #8
-	ldr	x1, [x0] // x1 = task stack SP
-	mov	x3, sp // copy of current SP in x3
-	// Copy the contents of the sync stack to the task stack
-0:
-	sub	x0, x0, #8
-	sub	x1, x1, #8
-	ldr	x2, [x0]
-	str	x2, [x1]
-	cmp	x0, x3
-	b.ne	0b
-	// Switch to the task stack, ditch the old sync stack and
-	// pretend like nothing happened
-	mov	sp, x1
-	ret
-SYM_FUNC_END(switch_sync_stack_to_task_stack)
-NOKPROBE(switch_sync_to_task_stack)
 #endif
 
 SYM_CODE_START_LOCAL(ret_to_user)
@@ -1133,7 +1158,6 @@ SYM_CODE_START(__sdei_asm_handler)
 1:	adr_this_cpu dst=x5, sym=sdei_active_critical_event, tmp=x6
 2:	str	x19, [x5]
 
-#ifdef CONFIG_VMAP_STACK
 	/*
 	 * entry.S may have been using sp as a scratch register, find whether
 	 * this is a normal or critical event and switch to the appropriate
@@ -1146,7 +1170,6 @@ SYM_CODE_START(__sdei_asm_handler)
 2:	mov	x6, #SDEI_STACK_SIZE
 	add	x5, x5, x6
 	mov	sp, x5
-#endif
 
 #ifdef CONFIG_SHADOW_CALL_STACK
 	/* Use a separate shadow call stack for normal and critical events */

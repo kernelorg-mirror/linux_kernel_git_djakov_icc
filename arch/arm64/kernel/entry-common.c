@@ -5,6 +5,7 @@
  * Copyright (C) 2019 ARM Ltd.
  */
 
+#include <linux/compiler.h>
 #include <linux/context_tracking.h>
 #include <linux/kasan.h>
 #include <linux/linkage.h>
@@ -503,9 +504,13 @@ static void noinstr el1_fpac(struct pt_regs *regs, unsigned long esr)
 #define EL1_FAULT_ON_STACK 1
 #define EL1_STACK_OVERFLOW 2
 
+DECLARE_PER_CPU(unsigned long *, sync_stack_ptr);
+
 static unsigned int  noinstr el1_page_fault_on_stack(unsigned long esr,
 						     unsigned long far)
 {
+	unsigned long curr_sp = (unsigned long)current_stack_pointer;
+	unsigned long sync_stack = (unsigned long)*this_cpu_ptr(&sync_stack_ptr);
 	unsigned long stack = (unsigned long)current->stack;
 	unsigned long addr = untagged_addr(far);
 
@@ -517,18 +522,28 @@ static unsigned int  noinstr el1_page_fault_on_stack(unsigned long esr,
 	if (ESR_ELx_EC(esr) !=  ESR_ELx_EC_DABT_CUR)
 		return 0;
 
-	if (addr < stack || addr >= stack + THREAD_SIZE)
+	/*
+	 * Are we outside of the sync stack? As this is always used
+	 * when we fault on the stack, we are not faulting on the
+	 * stack if we're not on the sync stack.
+	 */
+	if (curr_sp < sync_stack || curr_sp > (sync_stack + SYNC_STACK_SIZE))
 		return 0;
+
+	if (addr < stack || addr >= stack + THREAD_SIZE) {
+		pr_err("Using sync stack but not faulting on the stack!\n");
+		return 0;
+	}
 
 	/* We hit the botton of the stack: overflow! */
 	if (addr == stack)
 		return EL1_STACK_OVERFLOW;
 
 	/* Actually a page fault on the stack! */
+	//pr_info("PAGE FAULT ON STACK AT 0x%08lx\n", addr);
 	return EL1_FAULT_ON_STACK;
 }
 
-/* Returns 1 if we are still on the sync stack, else 0 */
 asmlinkage int noinstr el1h_64_sync_handler(struct pt_regs *regs)
 {
 	unsigned long esr = read_sysreg(esr_el1);
@@ -537,8 +552,6 @@ asmlinkage int noinstr el1h_64_sync_handler(struct pt_regs *regs)
 		unsigned long far = read_sysreg(far_el1);
 		unsigned int fault;
 
-		/* First restore tpidr_el0 and tpidrro_el0 for dynamic stack */
-		tls_thread_restore_current();
 		/*
 		 * Are we faulting on the thread stack? Else just switch
 		 * back to the thread stack and continue as if nothing happened.
@@ -551,11 +564,8 @@ asmlinkage int noinstr el1h_64_sync_handler(struct pt_regs *regs)
 		if (fault == EL1_STACK_OVERFLOW)
 			handle_bad_stack(regs);
 		if (fault == EL1_FAULT_ON_STACK) {
-			pr_info("PAGE FAULT ON STACK!!\n");
 			do_stack_abort(far, regs);
 			return 1;
-		} else {
-			switch_sync_stack_to_task_stack();
 		}
 	}
 
